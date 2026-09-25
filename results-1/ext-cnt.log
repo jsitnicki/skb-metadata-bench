@@ -1,0 +1,12 @@
+# 2026-09-25T23:25:32+02:00 bpf/cnt.bpf.o -> results/ext-cnt.json
+# uname: 7.3.0-rc4+
+# link stats (lo):
+1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000
+    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
+    RX:  bytes packets errors dropped  missed   mcast           
+     608003448 9500052      0       0       0       0 
+    TX:  bytes packets errors dropped carrier collsns           
+     608003448 9500052      0       0       0       0 
+# bpf stats map:
+INGRESS                  total=9570108    [(1, 3190038), (3, 3190033), (5, 3190037)]
+EGRESS                   total=9570123    [(1, 3190044), (3, 3190041), (5, 3190038)]

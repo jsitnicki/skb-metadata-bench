@@ -41,15 +41,23 @@ re-deriving them. Methodology lives in [README.md](README.md).
   the floor mean for a stretch, rdev jumps to ~10%+ (seen 2026-09-24 on
   ext-ext; re-run fixed it). Quick check: per-run min/p10 vs mean from
   cpustats output.
-- Expected sane ranges (2026-09-24/25): floors ~43-46 busy, rdev ≤ 8%;
-  deltas gtp ≈ +5-6, ext ≈ +8-11, sys/soft split roughly even.
+- Expected sane ranges (2026-09-25, halt_poll_ns=0, v7.3-rc4 base):
+  floors ~30-33 busy, rdev ≤ 10%; deltas gtp ≈ +13-18 (≈ 900-1240
+  ns/pkt), ext ≈ +5-7 (≈ 360-500 ns/pkt); gtp soft-dominated, ext
+  sys-dominated. See report.md.
 
 ## Pitfalls
 
 - vng VM clock lags the host (~21 h): after host-side source edits,
   `rm` the affected `.o` before `vng -- make` or the rebuild silently
   no-ops (stale vmlinux/BTF). Verify kfuncs with `nm vmlinux | grep`.
-- Deltas are only meaningful against the same tree's floor — cross-tree
-  absolute comparisons carry a ~2-3 pp floor offset.
+- KVM halt-polling MUST be disabled on the host
+  (`echo 0 > /sys/module/kvm/parameters/halt_poll_ns`): with the
+  default 200 µs polling, idle-heavier runs get under-accounted busy
+  (ext appeared cheaper than its own floor; historical "degenerate
+  bimodal ext runs" were mostly this artifact). Persist via modprobe.d.
+- Deltas are only meaningful against the same tree's floor. Cross-tree
+  absolutes are valid only when trees share a base and floors agree
+  within noise (verified 2026-09-25 on v7.3-rc4).
 - Run-to-run floor drift of a few pp happens between VM boots; compare
   only runs from the same session's set of four.

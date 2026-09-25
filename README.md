@@ -60,6 +60,12 @@ Inside an 8-vCPU virtme-ng guest ([bench.sh](bench.sh)):
   frequency for stable numbers:
   `sudo tools/ecore-freq.sh 2700` (`off` restores dynamic scaling,
   [tools/ecore-freq.sh](tools/ecore-freq.sh))
+- disable KVM halt-polling on the host, or guest CPU accounting is
+  systematically skewed (idle-heavier runs get under-accounted; with
+  polling on, ext appeared *cheaper than its own floor*):
+  `echo 0 | sudo tee /sys/module/kvm/parameters/halt_poll_ns`
+  (default is 200000; restore with the same command). To persist:
+  `echo 'options kvm halt_poll_ns=0' | sudo tee /etc/modprobe.d/kvm-nohaltpoll.conf`
 
 ### Run flow
 
@@ -110,6 +116,12 @@ Output: the plain per-type table, then two markdown tables —
   deltas, repeat run pairs and average the deltas.
 - Watch for bimodal runs (traffic stalls): a run whose busy time dips
   below the floor's mean for a stretch (elevated rdev, ~10%+) is junk —
-  re-run it.
-- Only same-tree deltas (test − floor) are meaningful; cross-kernel
-  absolute comparisons carry a ~2-3 pp floor offset that dominates.
+  re-run it. Historical degenerate ext runs turned out to be mostly the
+  halt-polling artifact above; validate each run anyway via its `.log`
+  (lo packet counts ~9.5M, 0 errors; ext: FOUND == INGRESS == EGRESS)
+  and a flat per-second busy series with balanced per-CPU means.
+- Only same-tree deltas (test − floor) are meaningful. Cross-tree
+  absolute comparisons are only valid when both trees sit on the same
+  base commit and the floors agree within noise (verified 2026-09-25:
+  both on v7.3-rc4, six cnt runs at 29.9-33.1%). See
+  [REPORT.md](REPORT.md) for the full results.

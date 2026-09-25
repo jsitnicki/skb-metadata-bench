@@ -11,5 +11,6 @@ __pycache__/
 # emacs lock files
 .\#*
 
-# benchmark output (host-side copy)
+# benchmark output (host-side copy); final report sets are kept in results-N/
 results/
+!results-*/
