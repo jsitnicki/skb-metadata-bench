@@ -56,6 +56,10 @@ Inside an 8-vCPU virtme-ng guest ([bench.sh](bench.sh)):
 - on the host, vCPU threads are pinned to dedicated host threads via
   QMP once the VM is up (`just pin`,
   [tools/pin-vcpus-threads.py](tools/pin-vcpus-threads.py))
+- the host threads the vCPUs land on are E-cores (12-19); fix their
+  frequency for stable numbers:
+  `sudo tools/ecore-freq.sh 2700` (`off` restores dynamic scaling,
+  [tools/ecore-freq.sh](tools/ecore-freq.sh))
 
 ### Run flow
 
