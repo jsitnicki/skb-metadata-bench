@@ -5,7 +5,7 @@
 # done by clamping scaling_min_freq == scaling_max_freq (kHz).
 #
 # Usage:
-#   tools/ecore-freq.sh <khz>   - fix E-core frequency (e.g. 4000000)
+#   tools/ecore-freq.sh <mhz>   - fix E-core frequency (e.g. 4000)
 #   tools/ecore-freq.sh off     - restore dynamic scaling
 #
 # Needs root (writes to /sys cpufreq). Not persistent across reboot.
@@ -22,7 +22,7 @@ read -r HW_MAX <"$SYSFS/cpu${ECORES%% *}/cpufreq/cpuinfo_max_freq"
 usage() {
 	sed -n '2,12p' "$0"
 	echo
-	echo "hardware limits: min=$HW_MIN max=$HW_MAX kHz"
+	echo "hardware limits: min=$((HW_MIN / 1000)) max=$((HW_MAX / 1000)) MHz"
 	exit "${1:-0}"
 }
 
@@ -33,10 +33,10 @@ if [[ $1 == "off" ]]; then
 	MAX=$HW_MAX
 else
 	[[ $1 =~ ^[0-9]+$ ]] || usage 1
-	MIN=$1
-	MAX=$1
+	MIN=$(( $1 * 1000 ))
+	MAX=$MIN
 	(( MIN >= HW_MIN && MAX <= HW_MAX )) || {
-		echo "error: $1 outside $HW_MIN..$HW_MAX kHz" >&2
+		echo "error: $1 outside $((HW_MIN / 1000))..$((HW_MAX / 1000)) MHz" >&2
 		exit 1
 	}
 fi
@@ -56,6 +56,6 @@ done
 
 first=${ECORES%% *}
 last=${ECORES##* }
-echo "E-cores (cpu$first-$last): min=$MIN max=$MAX kHz"
+echo "E-cores (cpu$first-$last): min=$((MIN / 1000)) max=$((MAX / 1000)) MHz"
 paste -d' ' <(grep "^processor" /proc/cpuinfo) <(grep MHz /proc/cpuinfo) |
 	sed -n "$((first + 1)),$((last + 1))p"
