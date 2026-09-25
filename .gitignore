@@ -1,0 +1,15 @@
+# build artifacts
+attach
+loader
+*.bpf.o
+*.o.tmp
+
+# python caches
+__pycache__/
+.mypy_cache/
+
+# emacs lock files
+.\#*
+
+# benchmark output (host-side copy)
+results/
