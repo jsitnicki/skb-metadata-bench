@@ -1,0 +1,13 @@
+# 2026-09-29T19:14:29+02:00 bpf/gtplru.bpf.o -> results/gtp-gtplru.json
+# uname: 7.3.0-rc4+
+# link stats (lo):
+1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000
+    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
+    RX:  bytes packets errors dropped  missed   mcast           
+     607987960 9499810      0       0       0       0 
+    TX:  bytes packets errors dropped carrier collsns           
+     607987960 9499810      0       0       0       0 
+# bpf stats map:
+INGRESS                  total=9570874    [(1, 3190240), (3, 3190323), (5, 3190311)]
+EGRESS                   total=9570884    [(1, 3190243), (3, 3190326), (5, 3190315)]
+FREE_REAPED/CREATE_FAIL  total=9570883    [(1, 3190243), (3, 3190326), (5, 3190314)]
