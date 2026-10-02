@@ -1,15 +1,31 @@
 #!/bin/bash
 
+# Runs the 3-pair loopback UDP load + mpstat, and also collects
+# per-program BPF stats (run_time_ns / run_cnt) on top: the sysctl
+# kernel.bpf_stats_enabled is turned on for the whole window and the
+# prog snapshot is written to <output-base>.bpfstats next to the JSON.
+# Parse the sidecar with tools/bpfstats.py for per-prog ns/run.
+
 if [ $# -lt 1 ] || [ -z "$1" ]; then
 	echo "usage: $0 <output-file>" >&2
 	exit 1
 fi
 
-BW=14m
+BW=50m
 
 MPSTAT_SEC=60
 CLIENT_SEC=$((MPSTAT_SEC + 10))
 SERVER_SEC=$((CLIENT_SEC + 10))
+
+STATS_CTL=/proc/sys/kernel/bpf_stats_enabled
+OUT_BPFSTATS="${1%.json}.bpfstats"
+
+if [ -w "$STATS_CTL" ]; then
+	echo 1 > "$STATS_CTL"
+	echo "bpf stats enabled ($(cat $STATS_CTL))"
+else
+	echo "warning: $STATS_CTL not writable; skipping bpf stats" >&2
+fi
 
 echo "Running servers..."
 taskset -c 0 iperf -u -s -1 -t $SERVER_SEC -B 127.1.1.1 > /tmp/iperf-server.1.log &
@@ -30,3 +46,12 @@ taskset -c 6 mpstat -o JSON -P 0-5 1 $MPSTAT_SEC > /tmp/mpstat.log
 
 echo "Coping results..."
 cp /tmp/mpstat.log $1
+
+if [ -w "$STATS_CTL" ]; then
+	{
+		echo "# $(date -Is) bpf prog stats (run_time_ns / run_cnt)"
+		bpftool -j prog show
+	} > "$OUT_BPFSTATS"
+	echo 0 > "$STATS_CTL"
+	echo "wrote $OUT_BPFSTATS"
+fi
