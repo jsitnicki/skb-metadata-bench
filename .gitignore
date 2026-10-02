@@ -12,5 +12,8 @@ __pycache__/
 .\#*
 
 # benchmark output (host-side copy); final report sets are kept in results-N/
-results/
-!results-*/
+results/*
+
+
+# perf profiles (large, regenerable via run-profile.sh)
+profile/

@@ -1,133 +1,116 @@
 # Benchmark report: BPF per-packet metadata — skb ext vs gated tracepoint
 
-CPU overhead of two per-packet BPF metadata designs, measured on
-loopback UDP at ~146k pps, comparing each against a tc counting-prog
-floor on the same kernel.
+Direct per-program CPU cost of four per-packet BPF metadata designs,
+measured with BPF prog stats (`kernel.bpf_stats_enabled`,
+`run_time_ns` / `run_cnt`) on loopback UDP at ~568k pps.
 
-Date: 2026-09-25. Both trees on v7.3-rc4 (`93f51579e7df`):
-
-- gtp: `~/src/linux` (gated-tracepoints series, `CONFIG_SKB_GATED_TRACEPOINTS`)
-- ext: `~/src/linux-skb-ext` (bpf-skb-ext series, `CONFIG_BPF_SKB_EXT`)
+Date: 2026-10-02. Both trees on v7.3-rc4. Kernel carries the
+`min_size = map_extra` rhashtable floor patch
+(`kernel/bpf/hashtab.c`), so the `map_extra = 256` rhash variant
+keeps a 256-bucket floor instead of collapsing to `HASH_MIN_SIZE`.
+All numbers are the mean ± spread (half range) of 3 independent
+repetitions.
 
 Measurement environment: 8-vCPU virtme-ng guest on i7-13800H, vCPUs
-pinned 1:1 to host E-cores (12-19) clamped at 2700 MHz,
-**KVM halt-polling disabled** (`halt_poll_ns=0` — see README; with
-polling on, idle-heavier runs were systematically under-accounted and
-ext appeared *cheaper than its own floor*, an artifact).
+pinned 1:1 to host CPUs 12-19, KVM halt-polling disabled
+(`halt_poll_ns=0`). BPF prog stats count each program's full
+execution time while the static key is on — a direct measurement, no
+mpstat-delta inference.
 
 ## Summary
 
-Mean of 3 independent repetitions; busy in % of one core; Δ busy
-(mean across the 6 measured CPUs) against the same tree's cnt floor,
-± spread of the set deltas. ns/pkt charges the *aggregate* added CPU
-(Δ × 6 cores) to the total packet rate (146k pps) — i.e. the full
-TX+RX cost per packet:
+Absolute per-packet BPF cost (sum of the variant's progs'
+`run_time_ns / run_cnt`, mean ± spread over 3 sets):
 
-| variant                        | Δ busy (mean/6)    | ns/pkt @146k |
-|--------------------------------|--------------------|--------------|
-| gated tracepoints (rhash)      | **+16.4 ± 2.8 pp** | **≈ 6750**   |
-| gated tracepoints (percpu LRU) | **+10.0 ± 3.3 pp** | **≈ 4100**   |
-| bpf skb ext                    | **+6.6 ± 1.1 pp**  | **≈ 2720**   |
+| variant                              | BPF ns/pkt      |
+|--------------------------------------|-----------------|
+| **skb ext dynptr (ext)**             | **264 ± 2**     |
+| **gtp (per-cpu LRU hash)**           | **543 ± 1**     |
+| **gtp (rhash, min_size = 256)**      | **921 ± 35**    |
+| **gtp (rhash, vanilla / unfloored)** | **1191 ± 44**   |
 
-**The skb extension is ≈ 2.5x cheaper per packet** than the gated
-skb tracepoint design with rhash, ≈ 1.5x cheaper than the
-per-CPU-LRU hash variant. Details below.
+**The skb extension is the cheapest metadata carrier** — 2.1x cheaper
+than the best map variant (per-cpu LRU), 3.5x cheaper than the floored
+rhash, and 4.5x cheaper than the rhash without a size floor. The rhash
+variants also scatter far more run-to-run (±35-44) than ext/lru (±1-2)
+— resize machinery cost varies even when floored.
 
 ## Setup
 
-- 3 iperf pairs, 36-byte datagrams, 14 mbit/s each; servers on guest
-  CPUs 0/2/4, clients on 1/3/5; mpstat on CPU 6 sampling CPUs 0-5,
-  60 x 1 s window
-- variants: cnt (tc counter floor), gtp (rhash[skb] + `bpf_trace_skb`
-  + `raw_tp/skb_free` reaper + `tp_btf/skb_copy`), gtplru (same as
-  gtp but `BPF_MAP_TYPE_LRU_PERCPU_HASH` instead of rhash), ext
-  (`bpf_dynptr_from_skb_ext` create at egress, find at ingress)
-- every run validated: lo packet counts ~9.5M in 60 s, 0 errors/drops;
-  BPF stats counters consistent (ext: FOUND == INGRESS == EGRESS);
-  per-second busy series flat, per-CPU profile balanced
-  (servers ~13-21%, clients ~46-83%)
+- 3 iperf pairs, 36-byte datagrams, 50 mbit/s each (~568k pps total
+  sustained, uniform run_cnt ~34.1M across all variants — no
+  saturation); servers on guest CPUs 0/2/4, clients on 1/3/5, 60 s
+  window.
+- variants: **gtp (rht min_size)** — `BPF_MAP_TYPE_RHASH` keyed by
+  `&skb`, `map_extra = 256` (nelem_hint +, with the kernel patch,
+  `min_size` floor), `bpf_trace_skb` arming + `tp_btf/skb_free` reaper
+  + `tp_btf/skb_copy`; **gtp (vanilla)** — same datapath, no
+  `map_extra`, so `min_size` bottoms out at `HASH_MIN_SIZE = 4` and
+  the autoshrinker rides the watermarks; **gtp (per-cpu lru)** — same
+  but `BPF_MAP_TYPE_LRU_PERCPU_HASH` (fixed size, no resize);
+  **ext** — `bpf_dynptr_from_skb_ext` create at egress, find at
+  ingress, no map, no reaper.
+- BPF stats: `echo 1 > /proc/sys/kernel/bpf_stats_enabled` for the
+  whole run, then `bpftool -j prog show` at the end. Fresh VM per
+  variant, so `run_time_ns`/`run_cnt` accumulate from zero. Per-prog
+  ns/pkt = `run_time_ns / run_cnt`; variant total = sum of its progs.
 
 ## Results
 
-Three independent repetitions (set = one floor + one test run per
-tree). Mean busy % of one core across CPUs 0-5; deltas against the
-same tree's floor; ns/pkt = (Δbusy × 6) / 100 / 146000 x 1e9
-(aggregate added CPU over all 6 cores charged to total pps).
+Per-program ns/pkt (mean of 3 sets):
 
-|                     | set 1      | set 2      | set 3      | mean            |
-|---------------------|------------|------------|------------|-----------------|
-| gtp-cnt floor          | 33.06      | 31.35      | 31.21      | 31.87           |
-| gtp-gtp                | 46.20      | 49.48      | 49.19      | 48.29           |
-| **gtp Δ busy (pp)**    | **+13.14** | **+18.13** | **+17.98** | **+16.4 ± 2.8** |
-| **gtp ns/pkt**         | 5410       | 7450       | 7390       | **≈ 6750**      |
-| gtp-gtplru             | 41.41      | 45.16      | 38.99      | 41.85           |
-| **gtplru Δ busy (pp)** | **+8.34**  | **+13.81** | **+7.78**  | **+10.0 ± 3.3** |
-| **gtplru ns/pkt**      | 3430       | 5680       | 3200       | **≈ 4100**      |
-| ext-cnt floor          | 29.88      | 31.43      | 30.43      | 30.58           |
-| ext-ext                | 37.20      | 36.73      | 37.55      | 37.16           |
-| **ext Δ busy (pp)**    | **+7.33**  | **+5.30**  | **+7.12**  | **+6.6 ± 1.1**  |
-| **ext ns/pkt**         | 3010       | 2180       | 2930       | **≈ 2720**      |
+| prog                | gtp (min_size) | gtp (vanilla) | gtp (percpu LRU) | ext   |
+|---------------------|----------------|---------------|------------------|-------|
+| write (tc egress)   | 551            | 799           | 393              | 200   |
+| read (tc ingress)   | 88             | 84            | 49               | 64    |
+| skb_free (reaper)   | 281            | 307           | 100              | —     |
+| **total**           | **921**        | **1191**      | **543**          | **264** |
 
-Errors on the means are spread-based (n=3). Cross-check without
-floors: all six cnt runs sit at 29.9-33.1 (mean 31.2), and the direct
-gtp-gtp − ext-ext gap (48.3 − 37.2 = +11.1 pp) matches the
-delta-of-deltas (16.4 − 6.6 = +9.9 pp) within noise.
+`tp_btf/skb_copy` recorded zero runs on all gated variants — plain
+loopback UDP does not clone skbs, so the copy path is attached but
+never exercised.
 
-Note: the gtplru runs were taken 2026-09-29 in a later session than
-their floors (2026-09-25); comparability rests on the floors agreeing
-within noise across sessions (29.9-33.1 across all nine cnt runs).
-All gtplru runs validated: FREE_REAPED == EGRESS (no hash leaks),
-flat per-second busy series (rdev 4.2-6.2%).
+## Notes on the rhash variants
 
-### Where the cost sits (busy split, pp vs floor)
+The vanilla (unfloored) rhash pays **+270 ns/pkt (+29%) over the
+floored one** — same datapath, same packet count, the only difference
+is the table oscillating at the 30%/75% shrink/grow watermarks
+instead of resting at 256 buckets. That is the resize-churn cost:
+slow-path inserts through `rhashtable_insert_slow` →
+`rhashtable_insert_rehash`, plus the irq_work → workqueue rehash
+kicks on threshold crossings. It lands almost entirely in the write
+path (799 vs 551 ns/pkt).
 
-|       | sys          | soft         | note                                                                                                                                               |
-|-------|--------------|--------------|----------------------------------------------------------------------------------------------------------------------------------------------------|
-| gtp   | +5.3 .. +8.1 | +7.7 .. +9.7 | soft-dominated: `raw_tp/skb_free` reaper runs on the RX free path (`tp_btf/skb_copy` is attached but not exercised — no cloning on plain loopback) |
-| gtplru| +3.9 .. +7.5 | +3.5 .. +5.8 | more balanced: cheaper map ops cut both the egress write (sys) and the `skb_free` reaper (soft)                                                  |
-| ext   | +2.8 .. +4.0 | +2.3 .. +2.8 | sys-dominated: `skb_ext_add` alloc at tc egress (TX), read at ingress is cheap                                                                     |
+Both rhash variants also log a low rate of `bpf_map_update_elem`
+errors: floored 64.5k-72.0k and vanilla 26.8k-40.4k across the 3 sets
+(~34M packets each, i.e. 0.08-0.21%). On the vanilla table these are
+the rehash-race `-EBUSY`; on the floored table they are `-EEXIST` on
+re-tagged skb addresses (slab reuse). With the trace-first arm
+ordering, a failed insert leaves no map entry and the reaper simply
+finds nothing — no leak, occupancy stays low.
 
 ## Conclusion
 
-The BPF skb extension is **≈ 2.5x cheaper per packet** than the gated
-skb tracepoint design (rhash) for carrying per-packet metadata
-through the stack:
+For per-packet metadata on this workload, the skb extension dynptr is
+the cheapest carrier by a wide margin: **264 ns/pkt**, vs **543** for
+the best map-based design (per-cpu LRU) and **921** for the
+rhashtable design even with a size floor. Removing the floor costs
+another ~270 ns/pkt of pure resize churn (**1191**), which is what
+the `min_size = map_extra` patch eliminates.
 
-- **ext: ≈ 2720 ns/pkt** (2180-3010 across sets)
-- **gtplru: ≈ 4100 ns/pkt** (3200-5680 across sets)
-- **gtp: ≈ 6750 ns/pkt** (5410-7450 across sets)
-
-Swapping the rhash for a per-CPU LRU hash recovers ~40% of the gated
-tracepoint overhead (6750 -> 4100 ns/pkt) — the rhash's spinlock and
-refcount traffic is a large part of the cost — but ext remains
-≈ 1.5x cheaper than the best map variant. The lowest gtp estimate
-(5410) is still ~1.8x the highest ext one (3010), so the ext < gtp
-ordering is robust despite gtp's wider set-to-set scatter.
-
-Note these ns/pkt figures are *total system cost per packet* (TX hook
-+ RX hook + knock-on pipeline effects), not the raw cost of the
-metadata mechanism in isolation — e.g. 2.7 µs/pkt for ext is far more
-than the `skb_ext_add` alloc/free + 16-byte copy itself costs. The
-numbers measure end-to-end CPU attribution under this traffic
-pattern; ratios between variants are the robust signal.
-
-The qualitative reason is visible in the busy split: the
-gated-tracepoint design pays most of its overhead in softirq (reaping
-rhash entries at `skb_free`), while the extension rides on the skb —
-no reaper, no hash table; its dominant cost is the chunk allocation
-at TX.
+The qualitative split matches the mechanism: the gated-tracepoint
+designs pay a reaper on the RX free path (281-307 ns/pkt for rhash,
+100 for LRU) on top of a more expensive egress write, while the
+extension rides on the skb — no reaper, no hash table — and its cost
+concentrates in the egress `skb_ext` allocation (200 ns/pkt).
 
 ## Raw data
 
-All three sets are in-tree: `results-1/`, `results-2/`, `results-3/`
-(rows "set 1/2/3" above, respectively). Each holds
-`<tree>-<obj>.json` (mpstat) + `<tree>-<obj>.log` (uname, lo
-counters, BPF stats map) for the runs of the set, including the
-three gtplru runs (`gtp-gtplru.*`). Reproduce a
-set's tables with:
+Three repetition sets: `results-1/`, `results-2/`, `results-3/`. Each
+holds `<tree>-<variant>.bpfstats` (raw `bpftool -j prog show`) +
+matching `.json` (mpstat, kept for cross-check) + `.log` (uname, lo
+counters, stats map). Reproduce the summary with:
 
 ```sh
-python3 tools/cpustats.py \
-    results-1/gtp-cnt.json results-1/gtp-gtp.json \
-    results-1/ext-cnt.json results-1/ext-ext.json
+just bpfstats        # = tools/bpfstats.py --agg results-1 results-2 results-3
 ```
