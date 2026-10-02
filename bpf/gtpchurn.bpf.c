@@ -1,23 +1,20 @@
 // SPDX-License-Identifier: GPL-2.0
 //
-// Gated-tracepoint variant of the per-packet metadata benchmark.
+// Gated-tracepoint variant WITHOUT map_extra/nelem_hint.
 //
-//   tc-egress:   write metadata into rhash[skb], arm SKB_EXT_TRACE
-//                (enables skb_free/skb_copy/skb_scrub tracepoints),
-//                count packet.
-//   tc-ingress:  read the metadata back, count packet.
-//   tp/skb_free: reap the rhash entry when the skb is freed.
-//   tp/skb_copy: copy the entry when the skb is copied.
+// Identical datapath to gtp.bpf.c, but the rhash is created with
+// map_extra = 0: no nelem_hint and (with the min_size = map_extra
+// kernel patch) no min_size floor either. automatic_shrinking is
+// still on, min_size bottoms out at HASH_MIN_SIZE = 4, so at the
+// ~7-16-entry live set the table rides both the 30% shrink and 75%
+// grow watermarks on every packet. This is the resize-churn demo:
+// constant rehash windows, insert-side -EBUSY, irq_work storms.
 //
-// Hook order on loopback: egress (TX) fires before ingress (RX), so
-// metadata flows egress -> ingress.
-//
-// Same stats layout as cnt.bpf.c (key 0 = ingress, key 1 = egress)
-// so cpustats.py results are directly comparable.
+// Compare against gtp.bpf.o (map_extra = 256) to quantify the cost
+// of churn, and against gtplru.bpf.o (fixed-size, no resize).
 
 #include "vmlinux.h"
 
-#include <errno.h>
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
 
@@ -30,8 +27,7 @@ enum stat_idx {
 	STAT_EGRESS,
 	STAT_FREE_REAPED,
 	STAT_COPY,
-	STAT_UPDATE_ERR_BUSY,
-	STAT_UPDATE_ERR_OTHER,
+	STAT_UPDATE_ERROR,
 	STAT_MAX,
 };
 
@@ -44,27 +40,16 @@ struct meta {
 
 #define META_MAGIC 0x5ebee55e
 
-/* rhash: key = skb pointer, value = metadata. Entries are reclaimed
- * by the tp/skb_free program. Same shape as the skb-ext variant so
- * the rhash cost is identical on both sides of the comparison.
- *
- * max_entries must comfortably exceed peak live entries (~146k pps x
- * lifetime) or every insert hits the rhashtable resize slow path:
- * threshold crossing -> irq_work_queue -> self-IPI -> workqueue, per
- * packet. 1M entries puts us far above the 146k working set.
- *
- * map_extra = nelem_hint: seeds the initial table size. BPF's rhashtable
- * sets automatic_shrinking=true, so with an oversized table the
- * shrink-below-30% check fires irq_work on every insert/delete. Loopback
- * occupancy measured at ~140 entries (egress->free is sub-ms); hint 256
- * keeps the table at ~55% occupancy, safely inside the 30-75% band
- * between shrink and grow watermarks.
+/* rhash with NO map_extra: nelem_hint = 0 -> default initial size,
+ * min_size -> HASH_MIN_SIZE = 4. automatic_shrinking = true (BPF
+ * hard-sets it) means the table continuously shrinks toward the tiny
+ * live set and grows back, exercising the rehash slow path on a large
+ * fraction of inserts.
  */
 struct {
 	__uint(type, BPF_MAP_TYPE_RHASH);
 	__uint(map_flags, BPF_F_NO_PREALLOC);
 	__uint(max_entries, 1048576);
-	__uint(map_extra, 256);
 	__type(key, struct __sk_buff *);
 	__type(value, struct meta);
 } meta_map SEC(".maps");
@@ -90,8 +75,6 @@ SEC("tc/egress")
 int gtp_write(struct __sk_buff *ctx)
 {
 	struct meta init;
-	__u32 key;
-	__u64 *v;
 	int ret;
 
 	bump(STAT_EGRESS);
@@ -108,7 +91,7 @@ int gtp_write(struct __sk_buff *ctx)
 	/* BPF_ANY: tolerate re-tag if an skb ever passes twice. */
 	ret = bpf_map_update_elem(&meta_map, &ctx, &init, BPF_ANY);
 	if (ret)
-		bump(ret == -EBUSY ? STAT_UPDATE_ERR_BUSY: STAT_UPDATE_ERR_OTHER);
+		bump(STAT_UPDATE_ERROR);
 
 	return TC_ACT_OK;
 }
