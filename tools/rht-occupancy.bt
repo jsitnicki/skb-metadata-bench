@@ -1,0 +1,7 @@
+kprobe:rhtab_map_update_elem { @updates = count(); }
+kprobe:rhtab_map_delete_elem { @deletes = count(); }
+interval:s:1 {
+	@occupancy[@cpu] = @updates - @deletes;
+	print(@occupancy);
+	clear(@occupancy);
+}

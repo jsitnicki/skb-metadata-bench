@@ -67,7 +67,7 @@ def report(path: str, ncpus: int) -> dict:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("files", nargs="+", help="mpstat -o JSON files")
-    ap.add_argument("--pps", type=float, default=146000,
+    ap.add_argument("--pps", type=float, default=520833,
                     help="packet rate for the ns/pkt row (default: %(default)s)")
     ap.add_argument("--strip-prefix", default="results/",
                     help="prefix stripped from file names in md tables "

@@ -5,7 +5,7 @@ if [ $# -lt 1 ] || [ -z "$1" ]; then
 	exit 1
 fi
 
-BW=14m
+BW=50m
 
 PERF_SEC=60
 CLIENT_SEC=$((MPSTAT_SEC + 10))
@@ -29,4 +29,19 @@ echo "Running perf..."
 taskset -c 6 perf record -F 99 -C 0-5 -g -o /tmp/perf.data -- sleep $PERF_SEC
 
 echo "Coping results..."
-cp /tmp/perf.data $1
+cp /tmp/perf.data "$1"
+
+# Emit the derived artifacts next to the perf.data, following the
+# naming from README.profile.md:
+#   <out>.stacks          - perf script (for stackcollapse-perf.pl)
+#   <out>.report.txt      - perf report --stdio
+out="${1%.data}"
+echo "Generating stacks..."
+perf script --header -i /tmp/perf.data > "$out.stacks"
+echo "Generating report..."
+perf report --stdio -i /tmp/perf.data > "$out.report.txt"
+
+echo "Wrote:"
+echo "  $1"
+echo "  $out.stacks"
+echo "  $out.report.txt"

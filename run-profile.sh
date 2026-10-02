@@ -4,10 +4,7 @@ set -o nounset
 
 tree="$1"
 bpf_obj="$2"
-
-if [ ! -d results ]; then
-   mkdir results
-fi
+out_name="${3:-$tree-$bpf_obj}"
 
 # Refuse to benchmark from a misconfigured host (e.g. halt polling on).
 tools/check-host.sh || exit 1
@@ -25,4 +22,4 @@ tools/check-host.sh || exit 1
     fi
 ) &
 
-just vm-$tree ./attach-and-bench.sh bpf/$bpf_obj.bpf.o results/$tree-$bpf_obj.json
+just vm-$tree ./attach-and-profile.sh bpf/$bpf_obj.bpf.o results/perf.$out_name.data

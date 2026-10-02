@@ -1,0 +1,12 @@
+diff --git a/kernel/bpf/hashtab.c b/kernel/bpf/hashtab.c
+index f9464e566f10..18853325a375 100644
+--- a/kernel/bpf/hashtab.c
++++ b/kernel/bpf/hashtab.c
+@@ -2839,6 +2839,7 @@ static struct bpf_map *rhtab_map_alloc(union bpf_attr *attr)
+ 	params = rhtab_params;
+ 	params.key_len = rhtab->map.key_size;
+ 	params.nelem_hint = (u32)attr->map_extra;
++	params.min_size = (u16)attr->map_extra;
+ 	params.automatic_shrinking = true;
+ 
+ 	if (rhtab->map.key_size == sizeof(long)) {
